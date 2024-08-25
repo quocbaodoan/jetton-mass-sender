@@ -3,7 +3,7 @@
 </p>
 <p align="center" style="font-size: 1.2rem;">Send TON Jettons Easily!</p>
 
-1. Prepare json file with the following structure:
+1. Prepare json file with the following structure with any file name:
 
 ```json
 [

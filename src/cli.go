@@ -14,9 +14,9 @@ import (
 
 // Configuration stores the user's settings
 type Configuration struct {
-	SeedPhrase   string `json:"seedPhrase"`
-	JettonMasterAddress string `json:"jettonMasterAddress"`
-	Commentary   string `json:"commentary"`
+	SeedPhrase           string `json:"seedPhrase"`
+	JettonMasterAddress  string `json:"jettonMasterAddress"`
+	Commentary           string `json:"commentary"`
 	MessageEntryFilename string `json:"messageEntryFilename"`
 }
 
@@ -34,7 +34,6 @@ var setupCmd = &cobra.Command{
 	Run:   func(cmd *cobra.Command, args []string) { setupConfiguration() },
 }
 
-
 func runMainLogic(cmd *cobra.Command, args []string) {
 	config, err := loadConfiguration(configFilePath)
 	if err != nil {
@@ -43,7 +42,7 @@ func runMainLogic(cmd *cobra.Command, args []string) {
 	}
 	fmt.Println("Running main logic with current configuration...")
 
-	massSender(config.SeedPhrase, config.JettonMasterAddress, config.Commentary, config.MessageEntryFilename)
+	massSender(config.SeedPhrase, config.MessageEntryFilename)
 }
 
 func setupConfiguration() {
@@ -63,7 +62,7 @@ func setupConfiguration() {
 
 	config := Configuration{
 		SeedPhrase:           seedPhrase,
-		JettonMasterAddress:         jettonMasterAddress,
+		JettonMasterAddress:  jettonMasterAddress,
 		Commentary:           commentary,
 		MessageEntryFilename: messageEntryFilename,
 	}
@@ -73,7 +72,6 @@ func setupConfiguration() {
 
 	fmt.Println("Configuration saved successfully.")
 }
-
 
 func saveConfiguration(config Configuration, filePath string) error {
 	// Trim whitespace from the configuration values

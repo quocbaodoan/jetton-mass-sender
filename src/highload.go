@@ -15,7 +15,6 @@ import (
 	"github.com/xssnick/tonutils-go/liteclient"
 	"github.com/xssnick/tonutils-go/tlb"
 	"github.com/xssnick/tonutils-go/ton"
-	"github.com/xssnick/tonutils-go/ton/jetton"
 	"github.com/xssnick/tonutils-go/ton/wallet"
 )
 
@@ -24,32 +23,37 @@ type MessageEntry struct {
 	Address string `json:"address"`
 }
 
-func massSender(seedPhrase string, jettonMasterAddress string, commentary string, messageEntryFilename string) {
+func massSender(seedPhrase string, messageEntryFilename string) {
 	client := liteclient.NewConnectionPool()
 
-	// Connect to mainnet lite server
-	err := client.AddConnection(context.Background(), "135.181.140.212:13206", "K0t3+IWLOXHYMvMcrGZDPs+pn58a17LFbnXoQkKc2xw=")
+	// get config
+	cfg, err := liteclient.GetConfigFromUrl(context.Background(), "https://ton.org/global.config.json")
+	if err != nil {
+		log.Error("get config err:", err.Error())
+		return
+	}
+
+	// connect to mainnet lite servers
+	err = client.AddConnectionsFromConfig(context.Background(), cfg)
 	if err != nil {
 		log.Error("connection err:", err.Error())
 		return
 	}
 
-	ctx := client.StickyContext(context.Background())
+	// api client with full proof checks
 	api := ton.NewAPIClient(client, ton.ProofCheckPolicyFast).WithRetry()
+	api.SetTrustedBlockFromConfig(cfg)
 
 	words := strings.Split(seedPhrase, " ")
 
 	log.Infof("Seed words: %s", words)
 
 	// Initialize highload wallet
-	w, err := wallet.FromSeed(api, words, wallet.HighloadV2R2)
+	w, err := wallet.FromSeed(api, words, wallet.V4R2)
 	if err != nil {
 		log.Error("FromSeed err:", err.Error())
 		return
 	}
-
-	log.Infof("Wallet address: %s", w.WalletAddress())
-
 
 	block, err := api.CurrentMasterchainInfo(context.Background())
 	if err != nil {
@@ -90,29 +94,19 @@ func massSender(seedPhrase string, jettonMasterAddress string, commentary string
 		sum += amount
 	}
 
-	if float64(balance.Nano().Int64()) < (float64(len(messages)) * 5e7) + sum {
+	if float64(balance.Nano().Int64()) < (float64(len(messages))*5e7)+sum {
 		log.Error("Not enough balance to send all messages")
 		return
 	}
 
-	// Initialize token wallet
-	token := jetton.NewJettonMasterClient(api, address.MustParseAddr(jettonMasterAddress))
-	jettonWallet, err := token.GetJettonWallet(ctx, w.WalletAddress())
-	if err != nil {
-		log.Fatal(err)
-	}
+	// Start sending messages in batches
+	const batchSize = 4
 
-	jettonBalance, err := jettonWallet.GetBalance(ctx)
+	comment, err := wallet.CreateCommentCell("")
 	if err != nil {
-		log.Error("GetBalance err:", err.Error())
+		log.Fatal("CreateComment err:", err.Error())
 		return
 	}
-
-	log.Infof("Balance: %s jettons", jettonBalance)
-
-
-	// Start sending messages in batches
-	const batchSize = 100
 	for i := 0; i < len(messages); i += batchSize {
 		end := i + batchSize
 		if end > len(messages) {
@@ -122,33 +116,28 @@ func massSender(seedPhrase string, jettonMasterAddress string, commentary string
 		batch := messages[i:end]
 		var walletMessages []*wallet.Message
 		for _, msg := range batch {
-			log.Printf(msg.Address, msg.Amount)
-			amountTokens := tlb.MustFromDecimal(msg.Amount, 9)
-			comment, err := wallet.CreateCommentCell(commentary)
-			if err != nil {
-				log.Error("Error creating comment cell:", err.Error())
-				log.Fatal(err)
-			}
-			to := address.MustParseAddr(msg.Address)
-			transferPayload, err := jettonWallet.BuildTransferPayload(to, amountTokens, tlb.ZeroCoins, comment)
-			if err != nil {
-				log.Error("Error building transfer payload:", err.Error())
-				log.Fatal(err)
-			}
-			walletMsg := wallet.SimpleMessage(jettonWallet.Address(), tlb.MustFromTON("0.05"), transferPayload)
-			walletMessages = append(walletMessages, walletMsg)
+			addr := address.MustParseAddr(msg.Address)
+			walletMessages = append(walletMessages, &wallet.Message{
+				Mode: wallet.PayGasSeparately + wallet.IgnoreErrors, // pay fee separately, ignore action errors
+				InternalMessage: &tlb.InternalMessage{
+					IHRDisabled: true, // disable hyper routing (currently not works in ton)
+					Bounce:      addr.IsBounceable(),
+					DstAddr:     addr,
+					Amount:      tlb.MustFromTON(msg.Amount),
+					Body:        comment,
+				},
+			})
 		}
 
-		log.Infof("Sending transaction and waiting for confirmation for batch starting from index %s...")
-
-		txHash, err := w.SendManyWaitTxHash(ctx, walletMessages)
+		// send transaction that contains all our messages, and wait for confirmation
+		txHash, err := w.SendManyWaitTxHash(context.Background(), walletMessages)
 		if err != nil {
 			log.Error("Transfer err:", err.Error())
 			return
 		}
 
-		log.Infof("Batch transaction sent, hash: %s", base64.StdEncoding.EncodeToString(txHash))
-		log.Infof("Explorer link: https://tonscan.org/tx/ %s", base64.URLEncoding.EncodeToString(txHash))
+		log.Print("transaction sent, hash:", base64.StdEncoding.EncodeToString(txHash))
+		log.Print("explorer link: https://tonscan.org/tx/" + base64.URLEncoding.EncodeToString(txHash))
 
 		log.Info("Sleeping for 30 seconds...")
 		time.Sleep(30 * time.Second)
